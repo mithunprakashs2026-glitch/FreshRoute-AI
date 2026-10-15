@@ -101,7 +101,7 @@ def allocate_freshroute(batches, demand, routes):
             if demand.get(key, 0) <= 0 or route["capacity"] <= 0:
                 continue
 
-            net = b["market_price"] - b["unit_cost"] - route["cost_per_unit"]
+            net = b["market_price"] - route["cost_per_unit"]
             candidates.append((b, dest, route, net))
 
     if not candidates:
