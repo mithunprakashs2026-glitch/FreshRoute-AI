@@ -180,10 +180,11 @@ def allocate_freshroute(batches, demand, routes):
 def summarize(allocations, batches):
     alloc = pd.DataFrame(allocations)
     total_stock = sum(b["quantity"] for b in batches)
+    total_purchase_cost = float(sum(b["quantity"] * b["unit_cost"] for b in batches))
     if alloc.empty:
         return {"alloc": alloc, "stock": total_stock, "shipped": 0, "spoilage": total_stock,
-                "fulfillment": 0.0, "revenue": 0.0, "transport": 0.0, "purchase": 0.0,
-                "net": 0.0, "discounted": 0}
+                "fulfillment": 0.0, "revenue": 0.0, "transport": 0.0,
+                "purchase": total_purchase_cost, "net": -total_purchase_cost, "discounted": 0}
     alloc["gross_revenue"] = alloc["quantity"] * alloc["market_price"]
     alloc["purchase_cost"] = alloc["quantity"] * alloc["unit_cost"]
     alloc["transport_total"] = alloc["quantity"] * alloc["transport_cost"]
@@ -191,7 +192,7 @@ def summarize(allocations, batches):
     # Revenue assumes sold units receive listed market price; unsold stock is counted as spoilage.
     revenue = float(alloc["gross_revenue"].sum())
     transport = float(alloc["transport_total"].sum())
-    purchase = float(sum(b["quantity"] * b["unit_cost"] for b in batches))
+    purchase = total_purchase_cost
     # Fulfilment denominator is total generated demand, not inventory.
     return {"alloc": alloc, "stock": total_stock, "shipped": shipped,
             "spoilage": max(0, total_stock - shipped), "revenue": revenue,
@@ -299,10 +300,22 @@ with left:
     fig.update_layout(showlegend=False, margin=dict(l=10,r=10,t=55,b=10))
     st.plotly_chart(fig, use_container_width=True)
 
+    with st.expander("Compare the underlying financial totals"):
+        financials = pd.DataFrame([
+            {"Strategy": "FIFO baseline", "Sales revenue (₹)": fifo["revenue"],
+             "Transport cost (₹)": fifo["transport"], "Starting inventory cost (₹)": fifo["purchase"],
+             "Estimated net value (₹)": fifo["net"]},
+            {"Strategy": "FreshRoute MILP", "Sales revenue (₹)": smart["revenue"],
+             "Transport cost (₹)": smart["transport"], "Starting inventory cost (₹)": smart["purchase"],
+             "Estimated net value (₹)": smart["net"]},
+        ])
+        st.dataframe(financials.round(2), use_container_width=True, hide_index=True)
+        st.caption("Net value = shipped-unit sales revenue − transport cost on shipped units − purchase cost of all starting inventory.")
+
 with right:
     st.markdown("**How to read this**")
     st.write("Both strategies receive the same simulated inventory, demand, route times, and capacities. The baseline uses fixed destination order; FreshRoute optimizes feasible allocations using estimated contribution and shelf-life constraints.")
-    st.info("FreshRoute uses a mixed-integer linear programming (MILP) optimizer. Results are simulated estimates based on the current assumptions.")
+    st.info("FreshRoute uses a mixed-integer linear programming (MILP) optimizer to maximize estimated contribution under the modeled constraints. Results are simulated estimates; discount-driven demand changes and spoilage penalties are not directly optimized.")
     st.markdown("**Constraint checks**")
     checks = [
         ("Destination capacity", all(smart["alloc"].groupby("destination")["quantity"].sum().get(d, 0) <= r["capacity"] for d, r in routes.items()) if not smart["alloc"].empty else True),
@@ -374,9 +387,9 @@ with st.expander("Methodology & limitations"):
     st.markdown("""
     - **Data:** generated inside this app; no real distributor dataset or live feed is used.
     - **Baseline:** earliest-expiring feasible batches are considered in a fixed destination order.
-    - **FreshRoute heuristic:** ranks feasible batch–destination choices using estimated contribution per unit and a shelf-life urgency bonus.
+    - **FreshRoute optimizer:** mixed-integer linear programming (MILP) maximizes estimated contribution per shipped unit, subject to inventory, route capacity, demand, and shelf-life feasibility constraints.
     - **Feasibility:** respects simulated destination capacity, destination-commodity demand, and arrival-before-expiry.
-    - **Net value:** sales revenue minus purchase and transport costs for allocated units. It does not include labor, cold storage, disposal, or discount effects.
+    - **Net value:** shipped-unit sales revenue minus transport cost on shipped units and purchase cost of all starting inventory. It does not include labor, cold storage, disposal, or discount effects.
     - **Spoilage estimate:** all unallocated inventory is counted as unsold/spoiled for this simplified one-period scenario.
     - **Not production-ready:** validate with representative real data and compare against a documented baseline before making operational claims.
     """)
